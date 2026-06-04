@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Appuvi</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 :root{--bg:#000000;--s:#111111;--s2:#1c1c1c;--s3:#282828;--br:rgba(255,255,255,.08);--br2:rgba(255,255,255,.15);--tx:#f5f0ee;--mu:#9C9A9A;--mu2:#b8b8b8;--inc:#10b981;--exp:#f43f5e;--don:#c47a5a;--sav:#3b82f6;--acc:#A35E47;--al:rgba(163,94,71,.18)}
@@ -194,54 +195,299 @@ const fmt=n=>new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maxi
 const fmtK=n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:fmt(n);
 const fmtP=n=>`${Math.round(n||0)}%`;
 const esc=s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-const hash=s=>{let h=0;for(let i=0;i<s.length;i++)h=(Math.imul(31,h)+s.charCodeAt(i))|0;return Math.abs(h).toString(16);}
 
 // ════════════════════════════════════════
-// STORAGE MULTIUSUARIO
+// SUPABASE CLIENT
 // ════════════════════════════════════════
-// Estructura localStorage:
-//   appuvi_users          → array de usuarios registrados
-//   appuvi_u_{uid}        → datos privados de cada usuario
-//   appuvi_global         → config global (dark)
+const SUPA_URL = "https://ytsyxmzscwkheoyyckgf.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl0c3l4bXpzY3draGVveXlja2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyNzgwNDMsImV4cCI6MjA5NTg1NDA0M30.U75AnxW9FVxWKWt73u1q7vAhJzuGr9FnPyTpRbvcm4M";
+const supa = supabase.createClient(SUPA_URL, SUPA_KEY);
 
-const K_USERS  = "appuvi_users";
-const K_GLOBAL = "appuvi_global";
-const uKey = id => `appuvi_u_${id}`;
+// ════════════════════════════════════════
+// SUPABASE: AUTH
+// ════════════════════════════════════════
+async function doLogin(){
+  const em = document.getElementById("le").value.trim().toLowerCase();
+  const pw = document.getElementById("lp2").value;
+  const err = document.getElementById("lerr");
+  if(!em||!pw){err.textContent="Completa todos los campos";err.style.display="";return;}
+  err.style.display="none";
 
-function getUsers(){try{return JSON.parse(localStorage.getItem(K_USERS)||"[]");}catch{return[];}}
-function saveUsers(list){try{localStorage.setItem(K_USERS,JSON.stringify(list));}catch{}}
+  showLoginLoading(true);
+  const {data,error} = await supa.auth.signInWithPassword({email:em,password:pw});
+  showLoginLoading(false);
 
-function getUserData(uid){
-  try{
-    const raw=localStorage.getItem(uKey(uid));
-    if(raw) return JSON.parse(raw);
-  }catch{}
-  return null;
+  if(error){
+    err.textContent = error.message==="Invalid login credentials"
+      ? "Email o contraseña incorrectos"
+      : error.message;
+    err.style.display="";
+    return;
+  }
+  await afterLogin(data.user);
 }
-function saveUserData(uid,data){
-  try{localStorage.setItem(uKey(uid),JSON.stringify(data));}catch{}
-}
-function deleteUserData(uid){
-  try{localStorage.removeItem(uKey(uid));}catch{}
-}
 
-// Inicializar usuarios demo si no existen
-function initDemoUsers(){
-  let users=getUsers();
-  if(users.length>0) return;
-  const demo=[
-    {uid:"admin001",name:"Administrador",email:"admin@appuvi.co",pwHash:hash("admin123"),role:"admin",avatar:"A",avatarColor:"av-0",createdAt:new Date().toISOString(),active:true},
-    {uid:"user001",name:"Carlos Gómez",email:"carlos@appuvi.co",pwHash:hash("user123"),role:"user",avatar:"C",avatarColor:"av-1",createdAt:new Date().toISOString(),active:true},
-    {uid:"user002",name:"María López",email:"maria@appuvi.co",pwHash:hash("user123"),role:"user",avatar:"M",avatarColor:"av-2",createdAt:new Date().toISOString(),active:true},
-    {uid:"user003",name:"Andrés Torres",email:"andres@appuvi.co",pwHash:hash("user123"),role:"user",avatar:"A",avatarColor:"av-3",createdAt:new Date().toISOString(),active:true},
-  ];
-  saveUsers(demo);
-  // Datos privados para cada usuario
-  demo.filter(u=>u.role==="user").forEach(u=>{
-    saveUserData(u.uid,{txs:seedTxs(),budgets:seedB(),goals:seedG(),profile:{},dark:true,filterM:nowM,filterY:nowY});
+async function doRegister(){
+  const name = document.getElementById("rn").value.trim();
+  const em   = document.getElementById("re").value.trim().toLowerCase();
+  const pw   = document.getElementById("rp").value;
+  const pw2  = document.getElementById("rp2").value;
+  const err  = document.getElementById("rerr");
+  if(!name||!em||!pw||!pw2){err.textContent="Completa todos los campos";err.style.display="";return;}
+  if(pw.length<6){err.textContent="La contraseña debe tener al menos 6 caracteres";err.style.display="";return;}
+  if(pw!==pw2){err.textContent="Las contraseñas no coinciden";err.style.display="";return;}
+  err.style.display="none";
+
+  showRegisterLoading(true);
+  const {data,error} = await supa.auth.signUp({
+    email:em, password:pw,
+    options:{data:{name, role:"user"}}
   });
-  saveUserData("admin001",{txs:[],budgets:seedB(),goals:[],profile:{},dark:true,filterM:nowM,filterY:nowY});
+  showRegisterLoading(false);
+
+  if(error){err.textContent=error.message;err.style.display="";return;}
+  toast(`¡Bienvenido/a, ${name}! 🎉`);
+  await afterLogin(data.user);
 }
+
+async function doLogout(){
+  await save();
+  await supa.auth.signOut();
+  ST.user=null;ST.txs=[];ST.budgets={};ST.goals=[];
+  ST.debts=[];ST.recurring=[];ST.notifs=[];
+  document.getElementById("app").style.display="none";
+  document.getElementById("lp").style.display="flex";
+  loginMode="login";
+  renderLoginBox();
+}
+
+async function afterLogin(authUser){
+  if(!authUser) return;
+  // Get profile
+  const {data:profile} = await supa.from("profiles").select("*").eq("id",authUser.id).single();
+  if(!profile){
+    // Profile should be created by trigger, retry once
+    await new Promise(r=>setTimeout(r,1000));
+    const {data:p2} = await supa.from("profiles").select("*").eq("id",authUser.id).single();
+    if(!p2){toast("Error cargando perfil","err");return;}
+    ST.user = {...p2, uid:p2.id, avatarColor:"av-0"};
+  } else {
+    ST.user = {...profile, uid:profile.id, avatarColor:profile.avatar_color||"av-0"};
+  }
+  document.getElementById("lp").style.display="none";
+  document.getElementById("app").style.display="flex";
+  await loadUserState();
+  initApp();
+}
+
+function showLoginLoading(on){
+  const btn=document.querySelector("#login-box .lbtn");
+  if(btn)btn.textContent=on?"Ingresando...":"Iniciar sesión";
+}
+function showRegisterLoading(on){
+  const btn=document.querySelector("#login-box .lbtn");
+  if(btn)btn.textContent=on?"Creando cuenta...":"Crear cuenta gratis";
+}
+
+// ════════════════════════════════════════
+// SUPABASE: SAVE (sync to DB)
+// ════════════════════════════════════════
+async function save(){
+  if(!ST.user) return;
+  try{
+    // Save dark preference locally
+    try{localStorage.setItem("appuvi_dark",ST.dark?"1":"0");}catch{}
+  }catch{}
+}
+
+// Save individual entities to Supabase
+async function saveTxToDB(tx){
+  if(!ST.user) return;
+  await supa.from("transactions").upsert({
+    id:tx.id, user_id:ST.user.uid,
+    type:tx.type, amount:tx.amount,
+    category:tx.category, description:tx.description,
+    date:tx.date, month:tx.month, year:tx.year
+  });
+}
+async function deleteTxFromDB(id){
+  await supa.from("transactions").delete().eq("id",id).eq("user_id",ST.user.uid);
+}
+async function saveBudgetsToDB(){
+  if(!ST.user) return;
+  const rows = Object.entries(ST.budgets).map(([category,amount])=>({
+    user_id:ST.user.uid, category, amount
+  }));
+  await supa.from("budgets").upsert(rows,{onConflict:"user_id,category"});
+}
+async function saveGoalToDB(g){
+  await supa.from("goals").upsert({
+    id:g.id, user_id:ST.user.uid,
+    name:g.name, target:g.target, saved:g.saved,
+    icon:g.icon, color:g.color,
+    deadline:g.deadline||null, note:g.note||null
+  });
+}
+async function deleteGoalFromDB(id){
+  await supa.from("goals").delete().eq("id",id).eq("user_id",ST.user.uid);
+}
+async function saveDebtToDB(d){
+  await supa.from("debts").upsert({
+    id:d.id, user_id:ST.user.uid,
+    name:d.name, total:d.total, paid:d.paid,
+    rate:d.rate||0, quota:d.quota||0,
+    next_date:d.nextDate||null, icon:d.icon, color:d.color, notes:d.notes||null
+  });
+}
+async function deleteDebtFromDB(id){
+  await supa.from("debts").delete().eq("id",id).eq("user_id",ST.user.uid);
+}
+async function saveRecurringToDB(r){
+  await supa.from("recurring").upsert({
+    id:r.id, user_id:ST.user.uid,
+    type:r.type, amount:r.amount,
+    category:r.category, description:r.description,
+    day:r.day, active:r.active, color:r.color
+  });
+}
+async function deleteRecurringFromDB(id){
+  await supa.from("recurring").delete().eq("id",id).eq("user_id",ST.user.uid);
+}
+async function saveNotifToDB(n){
+  await supa.from("notifications").upsert({
+    id:n.id, user_id:ST.user.uid,
+    title:n.title, body:n.body||null,
+    icon:n.icon||"🔔", color:n.color||"#A35E47",
+    date:n.date||null, read:n.read||false
+  });
+}
+async function saveAuditToDB(action,detail){
+  if(!ST.user) return;
+  await supa.from("audit_log").insert({
+    user_id:ST.user.uid, action, detail
+  });
+}
+async function saveSettingsToDB(){
+  if(!ST.user) return;
+  await supa.from("profiles").update({settings:ST.settings}).eq("id",ST.user.uid);
+}
+async function saveProfileToDB(updates){
+  await supa.from("profiles").update(updates).eq("id",ST.user.uid);
+}
+
+// ════════════════════════════════════════
+// SUPABASE: LOAD (read from DB)
+// ════════════════════════════════════════
+async function loadUserState(){
+  if(!ST.user) return;
+  showLoadingOverlay(true);
+  try{
+    const uid = ST.user.uid;
+    const [txRes,budRes,goalRes,debtRes,recRes,notifRes,profRes] = await Promise.all([
+      supa.from("transactions").select("*").eq("user_id",uid).order("date",{ascending:false}),
+      supa.from("budgets").select("*").eq("user_id",uid),
+      supa.from("goals").select("*").eq("user_id",uid),
+      supa.from("debts").select("*").eq("user_id",uid),
+      supa.from("recurring").select("*").eq("user_id",uid),
+      supa.from("notifications").select("*").eq("user_id",uid).order("created_at",{ascending:false}),
+      supa.from("profiles").select("*").eq("id",uid).single(),
+    ]);
+
+    // Transactions
+    ST.txs = (txRes.data||[]).map(t=>({
+      id:t.id, type:t.type, amount:+t.amount,
+      category:t.category, description:t.description,
+      date:t.date, month:t.month, year:t.year
+    }));
+    if(!ST.txs.length && ST.user.role!=="admin") ST.txs=seedTxs();
+
+    // Budgets
+    ST.budgets = {};
+    (budRes.data||[]).forEach(b=>{ST.budgets[b.category]=+b.amount;});
+    if(!Object.keys(ST.budgets).length) ST.budgets=seedB();
+
+    // Goals
+    ST.goals = (goalRes.data||[]).map(g=>({
+      id:g.id, name:g.name, target:+g.target, saved:+g.saved,
+      icon:g.icon, color:g.color, deadline:g.deadline, note:g.note
+    }));
+    if(!ST.goals.length && ST.user.role!=="admin") ST.goals=seedG();
+
+    // Debts
+    ST.debts = (debtRes.data||[]).map(d=>({
+      id:d.id, name:d.name, total:+d.total, paid:+d.paid,
+      rate:+d.rate, quota:+d.quota, nextDate:d.next_date,
+      icon:d.icon, color:d.color, notes:d.notes
+    }));
+    if(!ST.debts.length && ST.user.role!=="admin") ST.debts=seedDebts();
+
+    // Recurring
+    ST.recurring = (recRes.data||[]).map(r=>({
+      id:r.id, type:r.type, amount:+r.amount,
+      category:r.category, description:r.description,
+      day:r.day, active:r.active, color:r.color
+    }));
+    if(!ST.recurring.length && ST.user.role!=="admin") ST.recurring=seedRecurring();
+
+    // Notifications
+    ST.notifs = (notifRes.data||[]).map(n=>({
+      id:n.id, title:n.title, body:n.body,
+      icon:n.icon, color:n.color, date:n.date, read:n.read,
+      createdAt:n.created_at
+    }));
+
+    // Profile & settings
+    const prof = profRes.data;
+    if(prof){
+      ST.settings = prof.settings||{currency:"COP",startOfMonth:1,showCents:false};
+      ST.user.name = prof.name;
+      ST.user.role = prof.role;
+      ST.user.avatar = prof.avatar||ST.user.name[0].toUpperCase();
+      ST.user.avatarColor = prof.avatar_color||"av-0";
+      ST.user.active = prof.active;
+    }
+    // Dark mode from localStorage
+    try{const d=localStorage.getItem("appuvi_dark");if(d!==null)ST.dark=d==="1";}catch{}
+    ST.fM = nowM; ST.fY = nowY;
+
+    // Seed data to DB if first login
+    if(ST.user.role!=="admin"){
+      if(!txRes.data?.length) await seedDataToDB();
+    }
+  }catch(e){console.error("loadUserState error:",e);}
+  showLoadingOverlay(false);
+}
+
+async function seedDataToDB(){
+  // Push seed txs to DB on first login
+  const txs=seedTxs();
+  for(const tx of txs.slice(0,20)){ // seed only recent 20 for speed
+    await saveTxToDB(tx);
+  }
+  ST.txs=txs;
+  const bEntries=Object.entries(seedB()).map(([category,amount])=>({user_id:ST.user.uid,category,amount}));
+  await supa.from("budgets").upsert(bEntries,{onConflict:"user_id,category"});
+  const gSeed=seedG();
+  for(const g of gSeed) await saveGoalToDB(g);
+  ST.goals=gSeed;
+}
+
+function showLoadingOverlay(on){
+  let el=document.getElementById("loading-overlay");
+  if(on){
+    if(!el){
+      el=document.createElement("div");
+      el.id="loading-overlay";
+      el.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(4px)";
+      el.innerHTML=`<div style="width:44px;height:44px;border:3px solid rgba(163,94,71,.3);border-top-color:#A35E47;border-radius:50%;animation:spin .8s linear infinite"></div><div style="color:#fff;font-size:13px;margin-top:14px;font-weight:600">Cargando datos...</div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
+      document.body.appendChild(el);
+    }
+  } else {
+    if(el) el.remove();
+  }
+}
+
+function initDemoUsers(){} // No-op: Supabase handles users
 
 // ════════════════════════════════════════
 // ESTADO GLOBAL
@@ -253,39 +499,9 @@ let ST={
   chtab:"bar", txtab:"all", txq:"", calDate:tod()
 };
 
-function save(){
-  if(!ST.user) return;
-  saveUserData(ST.user.uid,{
-    txs:ST.txs, budgets:ST.budgets, goals:ST.goals,
-    profile:ST.profile, dark:ST.dark,
-    filterM:ST.fM, filterY:ST.fY,
-    debts:ST.debts||[], recurring:ST.recurring||[], notifs:ST.notifs||[]
-  });
-  try{localStorage.setItem(K_GLOBAL,JSON.stringify({dark:ST.dark}));}catch{}
-}
+// save() handled by Supabase async functions above
 
-function loadUserState(){
-  if(!ST.user) return;
-  const d=getUserData(ST.user.uid);
-  if(d){
-    ST.txs    = d.txs?.length ? d.txs : (ST.user.role==="admin"?[]:seedTxs());
-    ST.budgets= d.budgets && Object.keys(d.budgets).length ? d.budgets : seedB();
-    ST.goals  = d.goals?.length ? d.goals : seedG();
-    ST.profile= d.profile||{};
-    ST.dark   = d.dark !== undefined ? d.dark : true;
-    ST.fM     = d.filterM !== undefined ? d.filterM : nowM;
-    ST.fY     = d.filterY !== undefined ? d.filterY : nowY;
-    ST.debts  = d.debts?.length ? d.debts : seedDebts();
-    ST.recurring = d.recurring?.length ? d.recurring : seedRecurring();
-    ST.notifs = d.notifs || [];
-    ST.settings = d.settings || {currency:"COP",startOfMonth:1,showCents:false};
-  } else {
-    ST.txs=ST.user.role==="admin"?[]:seedTxs();
-    ST.budgets=seedB(); ST.goals=seedG(); ST.profile={}; ST.dark=true;
-    ST.debts=seedDebts(); ST.recurring=seedRecurring(); ST.notifs=[];
-    ST.settings={currency:"COP",startOfMonth:1,showCents:false};
-  }
-}
+// loadUserState() handled by Supabase async above
 
 // ════════════════════════════════════════
 // SEED DATA
@@ -438,63 +654,11 @@ function renderLoginBox(){
   }
 }
 
-function doLogin(){
-  const em=document.getElementById("le").value.trim().toLowerCase();
-  const pw=document.getElementById("lp2").value;
-  const err=document.getElementById("lerr");
-  if(!em||!pw){err.textContent="Completa todos los campos";err.style.display="";return;}
-  err.style.display="none";
-  const users=getUsers();
-  const found=users.find(u=>u.email.toLowerCase()===em && u.pwHash===hash(pw));
-  if(!found){err.textContent="Email o contraseña incorrectos";err.style.display="";return;}
-  if(!found.active){err.textContent="Esta cuenta está desactivada";err.style.display="";return;}
-  // Actualizar último login
-  found.lastLogin=new Date().toISOString();
-  saveUsers(users);
-  ST.user=found;
-  loadUserState();
-  document.getElementById("lp").style.display="none";
-  document.getElementById("app").style.display="flex";
-  initApp();
-}
+// handled by Supabase
 
-function doRegister(){
-  const name=document.getElementById("rn").value.trim();
-  const em=document.getElementById("re").value.trim().toLowerCase();
-  const pw=document.getElementById("rp").value;
-  const pw2=document.getElementById("rp2").value;
-  const err=document.getElementById("rerr");
-  if(!name||!em||!pw||!pw2){err.textContent="Completa todos los campos";err.style.display="";return;}
-  if(pw.length<6){err.textContent="La contraseña debe tener al menos 6 caracteres";err.style.display="";return;}
-  if(pw!==pw2){err.textContent="Las contraseñas no coinciden";err.style.display="";return;}
-  const users=getUsers();
-  if(users.find(u=>u.email.toLowerCase()===em)){err.textContent="Este email ya está registrado";err.style.display="";return;}
-  const colorIdx=users.length%AV_COLORS.length;
-  const newUser={
-    uid:uid(), name, email:em, pwHash:hash(pw), role:"user",
-    avatar:name[0].toUpperCase(), avatarColor:AV_COLORS[colorIdx],
-    createdAt:new Date().toISOString(), active:true, lastLogin:new Date().toISOString()
-  };
-  users.push(newUser);
-  saveUsers(users);
-  // Datos iniciales vacíos con tutorial
-  saveUserData(newUser.uid,{txs:seedTxs(),budgets:seedB(),goals:seedG(),profile:{},dark:true,filterM:nowM,filterY:nowY});
-  ST.user=newUser;
-  loadUserState();
-  document.getElementById("lp").style.display="none";
-  document.getElementById("app").style.display="flex";
-  initApp();
-  toast(`¡Bienvenido/a, ${name}! 🎉`);
-}
+// doRegister() handled by Supabase async above
 
-function doLogout(){
-  save();
-  ST.user=null; ST.txs=[]; ST.budgets={}; ST.goals=[];
-  document.getElementById("app").style.display="none";
-  document.getElementById("lp").style.display="flex";
-  loginMode="login";
-  renderLoginBox();
-}
+// handled by Supabase
 
 // ════════════════════════════════════════
 // APP INIT
@@ -534,7 +698,7 @@ function toggleSB(){
   document.getElementById("sl").textContent=ST.sbOpen?"Colapsar":"Expandir";
 }
 
-function _initAppBase(){
+async function _initAppBase(){
   document.body.classList.toggle("lm",!ST.dark);
   // Build nav
   document.getElementById("nav").innerHTML=NAVS
@@ -1091,7 +1255,7 @@ function calendar(){
 function navCal(dir){let m=ST.fM+dir,y=ST.fY;if(m<0){m=11;y--;}else if(m>11){m=0;y++;}ST.fM=m;ST.fY=y;document.getElementById("fm").value=m;document.getElementById("fy").value=y;calendar();}
 
 
-function deleteGoal(id){ST.goals=ST.goals.filter(g=>g.id!==id);save();toast("Meta eliminada");goals();}
+async function deleteGoal(id){ST.goals=ST.goals.filter(g=>g.id!==id);await deleteGoalFromDB(id);toast("Meta eliminada");goals();}
 
 function reports(){
   const m12=getM12(),txs=getF(),S=getS(txs),ce=getCE(txs);
@@ -1149,48 +1313,59 @@ function profile(){
   </div>`;
 }
 
-function saveProfile(){
+async function saveProfile(){
   const newName=document.getElementById("pn").value.trim();
   const newPw=document.getElementById("ppw")?.value;
   ST.profile={displayName:newName,tel:document.getElementById("pt").value,city:document.getElementById("pc").value};
-  // Actualizar nombre en la lista de usuarios
   if(newName){
-    const users=getUsers();
-    const idx=users.findIndex(u=>u.uid===ST.user.uid);
-    if(idx>=0){
-      users[idx].name=newName;
-      users[idx].avatar=newName[0].toUpperCase();
-      if(newPw&&newPw.length>=6) users[idx].pwHash=hash(newPw);
-      else if(newPw&&newPw.length>0&&newPw.length<6){toast("La contraseña debe tener al menos 6 caracteres","err");return;}
-      saveUsers(users);
-      ST.user.name=newName;
-      ST.user.avatar=newName[0].toUpperCase();
-      document.getElementById("ta").textContent=ST.user.avatar;
-      document.getElementById("ua").textContent=ST.user.avatar;
-      document.getElementById("un").textContent=newName;
-    }
+    ST.user.name=newName;
+    ST.user.avatar=newName[0].toUpperCase();
+    await saveProfileToDB({name:newName,avatar:newName[0].toUpperCase(),city:ST.profile.city});
+    document.getElementById("ta").textContent=ST.user.avatar;
+    document.getElementById("ua").textContent=ST.user.avatar;
+    document.getElementById("un").textContent=newName;
   }
-  save();toast("Perfil actualizado ✓");
+  if(newPw&&newPw.length>=6){
+    const {error}=await supa.auth.updateUser({password:newPw});
+    if(error) toast("Error al cambiar contraseña","err");
+    else toast("Contraseña actualizada ✓");
+  } else if(newPw&&newPw.length>0&&newPw.length<6){
+    toast("La contraseña debe tener al menos 6 caracteres","err");return;
+  }
+  toast("Perfil actualizado ✓");
+  addAuditLog("edit","Perfil actualizado");
 }
 
 // ════════════════════════════════════════
 // ADMIN DE USUARIOS
 // ════════════════════════════════════════
-function admin(){
+async function admin(){
   if(ST.user?.role!=="admin"){document.getElementById("content").innerHTML=`<div class="card"><p style="color:var(--mu)">Acceso restringido. Solo administradores.</p></div>`;return;}
-  const users=getUsers();
-  const totalTxs=users.filter(u=>u.role==="user").reduce((a,u)=>{const d=getUserData(u.uid);return a+(d?.txs?.length||0);},0);
+
+  // Fetch all users from Supabase profiles
+  const {data:users,error} = await supa.from("profiles").select("*").order("created_at");
+  if(error){document.getElementById("content").innerHTML=`<div class="card"><p style="color:var(--exp)">Error cargando usuarios: ${error.message}</p></div>`;return;}
+
+  // Count total txs per user
+  const {data:txCounts} = await supa.from("transactions").select("user_id, count", {count:"exact"});
+  const countMap={};
+  if(txCounts) txCounts.forEach(r=>{ countMap[r.user_id]=(countMap[r.user_id]||0)+1; });
+
+  const totalTxs=Object.values(countMap).reduce((a,v)=>a+v,0);
+
   document.getElementById("content").innerHTML=`
-  <!-- Stats -->
   <div class="g4">
-    ${[{l:"Usuarios registrados",v:users.length,i:"◎",c:"var(--acc)"},{l:"Usuarios activos",v:users.filter(u=>u.active).length,i:"✓",c:"var(--inc)"},{l:"Usuarios inactivos",v:users.filter(u=>!u.active).length,i:"✕",c:"var(--exp)"},{l:"Total transacciones",v:totalTxs,i:"⇄",c:"var(--don)"}].map(it=>`
-    <div class="card" style="display:flex;gap:10px;align-items:center">
+    ${[
+      {l:"Usuarios registrados",v:users.length,i:"◎",c:"var(--acc)"},
+      {l:"Usuarios activos",v:users.filter(u=>u.active).length,i:"✓",c:"var(--inc)"},
+      {l:"Usuarios inactivos",v:users.filter(u=>!u.active).length,i:"✕",c:"var(--exp)"},
+      {l:"Total transacciones",v:totalTxs,i:"⇄",c:"var(--don)"},
+    ].map(it=>`<div class="card" style="display:flex;gap:10px;align-items:center">
       <div style="width:40px;height:40px;border-radius:10px;background:${it.c}18;display:flex;align-items:center;justify-content:center;font-size:18px;color:${it.c};flex-shrink:0">${it.i}</div>
       <div><div style="font-size:9px;color:var(--mu)">${it.l}</div><div style="font-size:18px;font-weight:800">${it.v}</div></div>
     </div>`).join("")}
   </div>
 
-  <!-- User list -->
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
       <div style="font-size:12px;font-weight:700">Gestión de usuarios</div>
@@ -1198,11 +1373,10 @@ function admin(){
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
       ${users.map(u=>{
-        const uData=getUserData(u.uid);
-        const txCount=uData?.txs?.length||0;
-        const lastLogin=u.lastLogin?new Date(u.lastLogin).toLocaleString("es-CO",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"Nunca";
+        const txCount=countMap[u.id]||0;
+        const lastLogin=u.last_sign_in_at?new Date(u.last_sign_in_at).toLocaleString("es-CO",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"Nunca";
         return`<div class="ucard">
-          <div class="av ${u.avatarColor||"av-0"}" style="width:40px;height:40px;border-radius:12px;font-size:16px;flex-shrink:0">${u.avatar}</div>
+          <div class="av ${u.avatar_color||"av-0"}" style="width:40px;height:40px;border-radius:12px;font-size:16px;flex-shrink:0">${u.avatar||u.name[0]}</div>
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:7px;margin-bottom:3px">
               <span style="font-size:13px;font-weight:700">${esc(u.name)}</span>
@@ -1213,65 +1387,62 @@ function admin(){
             <div style="font-size:9px;color:var(--mu);margin-top:2px">Último acceso: ${lastLogin} · ${txCount} transacciones</div>
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
-            <button class="bg" style="font-size:10px;padding:5px 9px" onclick="openModal('edit-user','${u.uid}')">✏ Editar</button>
-            ${u.uid!==ST.user.uid?`
-            <button class="${u.active?"bd":"ba"}" style="font-size:10px;padding:5px 9px" onclick="toggleUserActive('${u.uid}')">${u.active?"Desactivar":"Activar"}</button>
-            <button class="bd" style="font-size:10px;padding:5px 9px" onclick="confirmDeleteUser('${u.uid}')">🗑</button>`:`<span style="font-size:9px;color:var(--mu);padding:5px 0">Tu cuenta</span>`}
+            <button class="bg" style="font-size:10px;padding:5px 9px" onclick="openModal('edit-user','${u.id}')">✏ Editar</button>
+            ${u.id!==ST.user.uid?`
+            <button class="${u.active?"bd":"ba"}" style="font-size:10px;padding:5px 9px" onclick="adminToggleActive('${u.id}',${!u.active})">${u.active?"Desactivar":"Activar"}</button>
+            <button class="bd" style="font-size:10px;padding:5px 9px" onclick="adminDeleteUser('${u.id}','${esc(u.name)}')">🗑</button>`
+            :`<span style="font-size:9px;color:var(--mu);padding:5px 0">Tu cuenta</span>`}
           </div>
         </div>`;
       }).join("")}
     </div>
   </div>
 
-  <!-- System info -->
   <div class="g2">
     <div class="card">
       <div style="font-size:12px;font-weight:700;margin-bottom:11px">Acciones del sistema</div>
       <div style="display:flex;flex-direction:column;gap:7px">
-        <button class="bg" style="text-align:left;display:flex;align-items:center;gap:8px;padding:10px 12px" onclick="adminExportAll()">⬇ Exportar todos los datos</button>
-        <button class="bg" style="text-align:left;display:flex;align-items:center;gap:8px;padding:10px 12px" onclick="adminResetDemo()">↺ Regenerar datos demo</button>
+        <button class="bg" style="text-align:left;display:flex;align-items:center;gap:8px;padding:10px 12px" onclick="adminExportAll()">⬇ Exportar todos los usuarios (CSV)</button>
+        <button class="bg" style="text-align:left;display:flex;align-items:center;gap:8px;padding:10px 12px" onclick="viewAllUsersAudit()">◧ Exportar auditoría global</button>
         <button class="bd" style="text-align:left;display:flex;align-items:center;gap:8px;padding:10px 12px" onclick="adminNukeAll()">⚠ Eliminar TODOS los datos</button>
       </div>
     </div>
     <div class="card">
       <div style="font-size:12px;font-weight:700;margin-bottom:11px">Info del sistema</div>
-      ${[["Versión","Appuvi v4.0"],["Admin",ST.user?.email],["Usuarios",users.length],["Storage",`localStorage`],["Transacciones totales",totalTxs]].map(([k,v])=>`<div style="display:flex;justify-content:space-between;font-size:10px;padding:5px 0;border-bottom:1px solid var(--br)"><span style="color:var(--mu)">${k}</span><span style="font-weight:700">${esc(String(v))}</span></div>`).join("")}
+      ${[["Versión","Appuvi v4.0"],["Admin",ST.user?.email],["BD","Supabase PostgreSQL"],["Período",`${MF[ST.fM]} ${ST.fY}`],["Modo",ST.dark?"Oscuro":"Claro"]].map(([k,v])=>`<div style="display:flex;justify-content:space-between;font-size:10px;padding:5px 0;border-bottom:1px solid var(--br)"><span style="color:var(--mu)">${k}</span><span style="font-weight:700">${esc(String(v))}</span></div>`).join("")}
     </div>
   </div>`;
 }
 
-function toggleUserActive(uid){
-  const users=getUsers();
-  const idx=users.findIndex(u=>u.uid===uid);
-  if(idx>=0){users[idx].active=!users[idx].active;saveUsers(users);toast(users[idx].active?"Usuario activado":"Usuario desactivado");admin();}
+// replaced by adminToggleActive
+// replaced by adminDeleteUser
+async function adminExportAll(){
+  const {data:users}=await supa.from("profiles").select("id,name,email,role,active,created_at");
+  if(!users){toast("Error al exportar","err");return;}
+  const rows=[["ID","Nombre","Email","Rol","Activo","Creado"],...users.map(u=>[u.id,u.name,u.email,u.role,u.active,u.created_at])];
+  const b=new Blob([rows.map(r=>r.map(c=>`"${String(c||"").replace(/"/g,'""')}"`).join(",")).join("\n")],{type:"text/csv"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="appuvi_usuarios.csv";a.click();
+  toast("Usuarios exportados ✓");
 }
-function confirmDeleteUser(uid){
-  const users=getUsers();
-  const u=users.find(x=>x.uid===uid);
-  if(!u)return;
-  if(!confirm(`¿Eliminar permanentemente a "${u.name}"?\nSe borrarán todos sus datos.`))return;
-  deleteUserData(uid);
-  saveUsers(users.filter(x=>x.uid!==uid));
-  toast("Usuario eliminado");admin();
-}
-function adminExportAll(){
-  const users=getUsers();
-  const rows=[["uid","name","email","role","active","lastLogin"],...users.map(u=>[u.uid,u.name,u.email,u.role,u.active,u.lastLogin||""])];
-  dlCSV(rows.map(r=>r.join(",")).join("\n"),"appuvi_usuarios.csv");toast("Usuarios exportados ✓");
-}
-function adminResetDemo(){
-  if(!confirm("¿Regenerar datos demo para todos los usuarios de prueba?"))return;
-  const users=getUsers();
-  users.filter(u=>u.role==="user").forEach(u=>saveUserData(u.uid,{txs:seedTxs(),budgets:seedB(),goals:seedG(),profile:{},dark:true,filterM:nowM,filterY:nowY}));
-  toast("Datos demo regenerados ✓");admin();
-}
-function adminNukeAll(){
-  if(!confirm("⚠️ ¿Eliminar TODOS los datos de TODOS los usuarios?"))return;
-  const users=getUsers();
-  users.forEach(u=>deleteUserData(u.uid));
-  saveUsers([]);
-  toast("Todo eliminado","err");
-  doLogout();
+// adminResetDemo not available with Supabase
+async function adminNukeAll(){
+  if(!confirm("⚠️ ¿Eliminar TODO? Esta acción es irreversible."))return;
+  const {data:users}=await supa.from("profiles").select("id");
+  if(users){
+    for(const u of users){
+      await Promise.all([
+        supa.from("transactions").delete().eq("user_id",u.id),
+        supa.from("budgets").delete().eq("user_id",u.id),
+        supa.from("goals").delete().eq("user_id",u.id),
+        supa.from("debts").delete().eq("user_id",u.id),
+        supa.from("recurring").delete().eq("user_id",u.id),
+        supa.from("notifications").delete().eq("user_id",u.id),
+        supa.from("audit_log").delete().eq("user_id",u.id),
+      ]);
+    }
+  }
+  toast("Todos los datos eliminados","err");
+  await doLogout();
 }
 
 // ════════════════════════════════════════
@@ -1286,7 +1457,7 @@ function exportCSV(){
 
 function closeModal(){document.getElementById("modal-root").innerHTML="";}
 
-function adminCreateUser(){
+async function adminCreateUser(){
   const name=document.getElementById("nu-name").value.trim();
   const em=document.getElementById("nu-email").value.trim().toLowerCase();
   const pw=document.getElementById("nu-pw").value;
@@ -1294,17 +1465,50 @@ function adminCreateUser(){
   const err=document.getElementById("nu-err");
   if(!name||!em||!pw){err.textContent="Completa todos los campos";err.style.display="";return;}
   if(pw.length<6){err.textContent="Contraseña mínimo 6 caracteres";err.style.display="";return;}
-  const users=getUsers();
-  if(users.find(u=>u.email.toLowerCase()===em)){err.textContent="Email ya registrado";err.style.display="";return;}
-  const colorIdx=users.length%AV_COLORS.length;
-  const newUser={uid:uid(),name,email:em,pwHash:hash(pw),role,avatar:name[0].toUpperCase(),avatarColor:AV_COLORS[colorIdx],createdAt:new Date().toISOString(),active:true};
-  users.push(newUser);
-  saveUsers(users);
-  saveUserData(newUser.uid,{txs:role==="user"?seedTxs():[],budgets:seedB(),goals:role==="user"?seedG():[],profile:{},dark:true,filterM:nowM,filterY:nowY});
-  closeModal();toast(`Usuario "${name}" creado ✓`);admin();
+  err.style.display="none";
+
+  // Create user via Supabase Auth (admin API not available in anon, so use signUp)
+  const {data,error}=await supa.auth.signUp({
+    email:em, password:pw,
+    options:{data:{name,role}}
+  });
+  if(error){err.textContent=error.message;err.style.display="";return;}
+
+  // Update role in profiles table (trigger creates the profile)
+  if(data.user){
+    await new Promise(r=>setTimeout(r,800)); // wait for trigger
+    await supa.from("profiles").update({role,name,avatar:name[0].toUpperCase()}).eq("id",data.user.id);
+  }
+  closeModal();toast(`Usuario "${name}" creado ✓`);
+  await addAuditLog("create",`Usuario creado: ${name} (${em})`);
+  admin();
 }
 
-function adminSaveUser(id){
+async function adminDeleteUser(id,name){
+  if(!confirm(`¿Eliminar permanentemente a "${name}"?\nSe borrarán todos sus datos.`))return;
+  // Delete all user data from Supabase
+  await Promise.all([
+    supa.from("transactions").delete().eq("user_id",id),
+    supa.from("budgets").delete().eq("user_id",id),
+    supa.from("goals").delete().eq("user_id",id),
+    supa.from("debts").delete().eq("user_id",id),
+    supa.from("recurring").delete().eq("user_id",id),
+    supa.from("notifications").delete().eq("user_id",id),
+    supa.from("audit_log").delete().eq("user_id",id),
+  ]);
+  await supa.from("profiles").delete().eq("id",id);
+  toast(`Usuario "${name}" eliminado`);
+  await addAuditLog("delete",`Usuario eliminado: ${name} (${id})`);
+  admin();
+}
+async function adminToggleActive(id,newState){
+  const {error}=await supa.from("profiles").update({active:newState}).eq("id",id);
+  if(error){toast("Error: "+error.message,"err");return;}
+  toast(newState?"Usuario activado":"Usuario desactivado");
+  await addAuditLog("edit",`Usuario ${newState?"activado":"desactivado"}: ${id}`);
+  admin();
+}
+async function adminSaveUser(id){
   const name=document.getElementById("eu-name").value.trim();
   const em=document.getElementById("eu-email").value.trim().toLowerCase();
   const pw=document.getElementById("eu-pw").value;
@@ -1313,40 +1517,47 @@ function adminSaveUser(id){
   const err=document.getElementById("eu-err");
   if(!name||!em){err.textContent="Nombre y email requeridos";err.style.display="";return;}
   if(pw&&pw.length<6){err.textContent="Contraseña mínimo 6 caracteres";err.style.display="";return;}
-  const users=getUsers();
-  const idx=users.findIndex(u=>u.uid===id);if(idx<0)return;
-  const dup=users.find(u=>u.email.toLowerCase()===em&&u.uid!==id);
-  if(dup){err.textContent="Email ya usado por otro usuario";err.style.display="";return;}
-  users[idx]={...users[idx],name,email:em,role,active,avatar:name[0].toUpperCase()};
-  if(pw) users[idx].pwHash=hash(pw);
-  saveUsers(users);
-  closeModal();toast("Usuario actualizado ✓");admin();
+  err.style.display="none";
+
+  const updates={name,role,active,avatar:name[0].toUpperCase(),updated_at:new Date().toISOString()};
+  const {error}=await supa.from("profiles").update(updates).eq("id",id);
+  if(error){err.textContent=error.message;err.style.display="";return;}
+
+  closeModal();toast("Usuario actualizado ✓");
+  await addAuditLog("edit",`Usuario editado: ${name}`);
+  admin();
 }
 
 function selTT(v){document.getElementById("tt").value=v;["expense","income"].forEach(t=>{const b=document.getElementById("tt-"+t);if(b)b.className="sbt"+(t===v?" on":"");});const s=document.getElementById("tc2");if(s)s.innerHTML=`<option value="">Seleccionar...</option>`+CATS[v].map(c=>`<option>${c}</option>`).join("");}
 function selGI(btn,em){document.getElementById("gi").value=em;document.querySelectorAll("[id^='gi-']").forEach(b=>{b.style.background="transparent";b.style.borderColor="var(--br)"});btn.style.background="var(--al)";btn.style.borderColor="var(--acc)";}
 function selGC(btn,c){document.getElementById("gc").value=c;document.querySelectorAll("[id^='gc-']").forEach(b=>b.style.borderColor="transparent");btn.style.borderColor="#fff";}
 
-function _saveTxBase(){
+async function _saveTxBase(){
   const type=document.getElementById("tt").value,amount=+document.getElementById("ta2").value,desc=document.getElementById("td2").value.trim(),date=document.getElementById("tdt2").value,cat=document.getElementById("tc2").value;
   if(!amount||!desc||!cat){toast("Completa todos los campos","err");return;}
   const d=new Date(date);
-  ST.txs.unshift({id:uid(),type,amount,category:cat,description:desc,date,month:d.getMonth(),year:d.getFullYear()});
-  save();closeModal();toast("Transacción guardada ✓");render();
+  const tx={id:uid(),type,amount,category:cat,description:desc,date,month:d.getMonth(),year:d.getFullYear()};
+  ST.txs.unshift(tx);
+  await saveTxToDB(tx);
+  closeModal();toast("Transacción guardada ✓");render();
 }
-function _saveGoalBase(){
+async function _saveGoalBase(){
   const name=document.getElementById("gn").value.trim(),target=+document.getElementById("gt").value;
   if(!name||!target){toast("Nombre y monto requeridos","err");return;}
-  ST.goals.push({id:uid(),name,target,saved:+document.getElementById("gs").value||0,icon:document.getElementById("gi").value,color:document.getElementById("gc").value,deadline:document.getElementById("gd").value,note:document.getElementById("gnote").value});
-  save();closeModal();toast("Meta creada ✓");goals();
+  const g={id:uid(),name,target,saved:+document.getElementById("gs").value||0,icon:document.getElementById("gi").value,color:document.getElementById("gc").value,deadline:document.getElementById("gd").value,note:document.getElementById("gnote").value};
+  ST.goals.push(g);
+  await saveGoalToDB(g);
+  closeModal();toast("Meta creada ✓");goals();
 }
-function doDeposit(id){
+async function doDeposit(id){
   const amt=+document.getElementById("dep").value;
   if(!amt||amt<=0){toast("Ingresa un monto","err");return;}
   ST.goals=ST.goals.map(g=>g.id===id?{...g,saved:Math.min(g.target,g.saved+amt)}:g);
-  save();closeModal();toast("Depósito registrado ✓");goals();
+  const g=ST.goals.find(x=>x.id===id);
+  if(g) await saveGoalToDB(g);
+  closeModal();toast("Depósito registrado ✓");goals();
 }
-function _deleteTxBase(id){ST.txs=ST.txs.filter(t=>t.id!==id);save();closeModal();toast("Eliminada");render();}
+async function _deleteTxBase(id){ST.txs=ST.txs.filter(t=>t.id!==id);await deleteTxFromDB(id);closeModal();toast("Eliminada");render();}
 
 // ════════════════════════════════════════
 // EDITAR TRANSACCIÓN
@@ -1382,7 +1593,7 @@ function selETT(v,id){
   const s=document.getElementById("etc");
   if(s)s.innerHTML=`<option value="">Seleccionar...</option>`+CATS[v].map(c=>`<option>${c}</option>`).join("");
 }
-function saveEditTx(id){
+async function saveEditTx(id){
   const type=document.getElementById("ett").value;
   const amount=+document.getElementById("eta").value;
   const desc=document.getElementById("etd").value.trim();
@@ -1390,8 +1601,10 @@ function saveEditTx(id){
   const cat=document.getElementById("etc").value;
   if(!amount||!desc||!cat){toast("Completa todos los campos","err");return;}
   const d=new Date(date);
-  ST.txs=ST.txs.map(t=>t.id===id?{...t,type,amount,description:desc,date,category:cat,month:d.getMonth(),year:d.getFullYear()}:t);
-  save();closeModal();toast("Transacción actualizada ✓");render();
+  const updated={...ST.txs.find(t=>t.id===id),type,amount,description:desc,date,category:cat,month:d.getMonth(),year:d.getFullYear()};
+  ST.txs=ST.txs.map(t=>t.id===id?updated:t);
+  await saveTxToDB(updated);
+  closeModal();toast("Transacción actualizada ✓");render();
 }
 
 // ════════════════════════════════════════
@@ -1466,9 +1679,11 @@ function debts(){
     </div>
   </div>`;
 }
-function deleteDebt(id){
+async function deleteDebt(id){
   if(!confirm("¿Eliminar esta deuda?"))return;
-  ST.debts=ST.debts.filter(d=>d.id!==id);save();toast("Deuda eliminada");debts();
+  ST.debts=ST.debts.filter(d=>d.id!==id);
+  await deleteDebtFromDB(id);
+  toast("Deuda eliminada");debts();
 }
 
 // ════════════════════════════════════════
@@ -1528,16 +1743,20 @@ function recurring(){
     <button class="bp" onclick="applyAllRecurring()">▶▶ Aplicar todas para ${MO[ST.fM]} ${ST.fY}</button>
   </div>`;
 }
-function toggleRecurring(id){
+async function toggleRecurring(id){
   ST.recurring=ST.recurring.map(r=>r.id===id?{...r,active:!r.active}:r);
-  save();recurring();
+  const r=ST.recurring.find(x=>x.id===id);
+  if(r) await saveRecurringToDB(r);
+  recurring();
 }
-function applyRecurring(id){
+async function applyRecurring(id){
   const r=ST.recurring.find(x=>x.id===id);if(!r||!r.active)return;
   const date=`${ST.fY}-${String(ST.fM+1).padStart(2,"0")}-${String(r.day).padStart(2,"0")}`;
   const d=new Date(date);
-  ST.txs.unshift({id:uid(),type:r.type,amount:r.amount,category:r.category,description:r.description+" (recurrente)",date,month:d.getMonth(),year:d.getFullYear()});
-  save();toast(`"${r.description}" aplicada ✓`);
+  const tx={id:uid(),type:r.type,amount:r.amount,category:r.category,description:r.description+" (recurrente)",date,month:d.getMonth(),year:d.getFullYear()};
+  ST.txs.unshift(tx);
+  await saveTxToDB(tx);
+  toast(`"${r.description}" aplicada ✓`);
 }
 function applyAllRecurring(){
   const active=ST.recurring.filter(r=>r.active);
@@ -1545,8 +1764,10 @@ function applyAllRecurring(){
   active.forEach(r=>applyRecurring(r.id));
   toast(`${active.length} transacciones aplicadas ✓`);render();
 }
-function deleteRecurring(id){
-  ST.recurring=ST.recurring.filter(r=>r.id!==id);save();toast("Eliminada");recurring();
+async function deleteRecurring(id){
+  ST.recurring=ST.recurring.filter(r=>r.id!==id);
+  await deleteRecurringFromDB(id);
+  toast("Eliminada");recurring();
 }
 
 // ════════════════════════════════════════
@@ -1621,9 +1842,21 @@ function notifications(){
   // Update topbar badge
   updateNotifBadge();
 }
-function markRead(id){ST.notifs=ST.notifs.map(n=>n.id===id?{...n,read:true}:n);save();notifications();}
-function markAllRead(){ST.notifs=ST.notifs.map(n=>({...n,read:true}));save();notifications();}
-function deleteNotif(id){ST.notifs=ST.notifs.filter(n=>n.id!==id);save();notifications();}
+async function markRead(id){
+  ST.notifs=ST.notifs.map(n=>n.id===id?{...n,read:true}:n);
+  await supa.from("notifications").update({read:true}).eq("id",id).eq("user_id",ST.user.uid);
+  notifications();
+}
+async function markAllRead(){
+  ST.notifs=ST.notifs.map(n=>({...n,read:true}));
+  await supa.from("notifications").update({read:true}).eq("user_id",ST.user.uid);
+  notifications();
+}
+async function deleteNotif(id){
+  ST.notifs=ST.notifs.filter(n=>n.id!==id);
+  await supa.from("notifications").delete().eq("id",id).eq("user_id",ST.user.uid);
+  notifications();
+}
 function updateNotifBadge(){
   const unread=ST.notifs.filter(n=>!n.read).length;
   // Update nav label
@@ -1821,7 +2054,7 @@ function selDebtColor(btn,c){document.getElementById("dc").value=c;document.quer
 function selNotifColor(btn,c){document.getElementById("nc").value=c;document.querySelectorAll("[id^='nc-']").forEach(b=>b.style.borderColor="transparent");btn.style.borderColor="#fff";}
 function selRT(v){document.getElementById("rt").value=v;["expense","income"].forEach(t=>{const b=document.getElementById("rt-"+t);if(b)b.className="sbt"+(t===v?" on":"");});const s=document.getElementById("rc");if(s)s.innerHTML=`<option value="">Seleccionar...</option>`+(CATS[v]||[]).map(c=>`<option>${c}</option>`).join("");}
 
-function saveDebt(existingId){
+async function saveDebt(existingId){
   const name=document.getElementById("dn").value.trim();
   const total=+document.getElementById("dt").value;
   if(!name||!total){toast("Nombre y monto requeridos","err");return;}
@@ -1837,20 +2070,23 @@ function saveDebt(existingId){
   };
   if(existingId) ST.debts=ST.debts.map(d=>d.id===existingId?debt:d);
   else ST.debts.push(debt);
-  save();closeModal();toast(existingId?"Deuda actualizada ✓":"Deuda registrada ✓");debts();
+  await saveDebtToDB(debt);
+  closeModal();toast(existingId?"Deuda actualizada ✓":"Deuda registrada ✓");debts();
 }
 
-function registerDebtPayment(id){
+async function registerDebtPayment(id){
   addAuditLog("pay","Pago de deuda registrado");
   const amt=+document.getElementById("pay-amt").value;
   const date=document.getElementById("pay-date").value;
   if(!amt||amt<=0){toast("Ingresa un monto","err");return;}
   ST.debts=ST.debts.map(d=>d.id===id?{...d,paid:Math.min(d.total,d.paid+amt)}:d);
-  // Registrar como egreso
-  const d2=new Date(date);
   const debt=ST.debts.find(x=>x.id===id);
-  ST.txs.unshift({id:uid(),type:"expense",amount:amt,category:"Deudas",description:`Pago ${debt?.name||"deuda"}`,date,month:d2.getMonth(),year:d2.getFullYear()});
-  save();closeModal();toast("Pago registrado ✓");debts();
+  await saveDebtToDB(debt);
+  const d2=new Date(date);
+  const tx={id:uid(),type:"expense",amount:amt,category:"Deudas",description:`Pago ${debt?.name||"deuda"}`,date,month:d2.getMonth(),year:d2.getFullYear()};
+  ST.txs.unshift(tx);
+  await saveTxToDB(tx);
+  closeModal();toast("Pago registrado ✓");debts();
 }
 
 function saveRecurring(){
@@ -1862,16 +2098,21 @@ function saveRecurring(){
   const cat=document.getElementById("rc").value;
   if(!amount||!desc||!cat){toast("Completa todos los campos","err");return;}
   const colors={income:"#10b981",expense:"#f43f5e"};
-  ST.recurring.push({id:uid(),type,amount,category:cat,description:desc,day,active:true,color:colors[type]});
-  save();closeModal();toast("Recurrente creada ✓");recurring();
+  const rec={id:uid(),type,amount,category:cat,description:desc,day,active:true,color:colors[type]};
+  ST.recurring.push(rec);
+  await saveRecurringToDB(rec);
+  closeModal();toast("Recurrente creada ✓");recurring();
 }
+async function saveRecurring(){ await _saveRecurringBase(); }
 
-function saveNotif(){
+async function saveNotif(){
   const title=document.getElementById("ntit").value.trim();
   const body=document.getElementById("nbody").value.trim();
   if(!title){toast("Título requerido","err");return;}
-  ST.notifs.push({id:uid(),title,body,date:document.getElementById("ndate").value,icon:document.getElementById("nico").value,color:document.getElementById("nc").value,read:false,createdAt:new Date().toISOString()});
-  save();closeModal();toast("Recordatorio guardado ✓");notifications();
+  const n={id:uid(),title,body,date:document.getElementById("ndate").value,icon:document.getElementById("nico").value,color:document.getElementById("nc").value,read:false,createdAt:new Date().toISOString()};
+  ST.notifs.push(n);
+  await saveNotifToDB(n);
+  closeModal();toast("Recordatorio guardado ✓");notifications();
 }
 
 document.addEventListener("keydown",e=>{
@@ -2038,14 +2279,22 @@ function showImportPreview(results,errors){
     </div>`;
 }
 function clearPreview(){_importPreview=[];document.getElementById("preview-card").style.display="none";}
-function confirmImport(){
+async function confirmImport(){
   if(!_importPreview.length){toast("Sin datos para importar","warn");return;}
-  const before=ST.txs.length;
-  ST.txs=[..._importPreview,...ST.txs];
-  // Audit log
-  addAuditLog("import",`Importadas ${_importPreview.length} transacciones desde CSV`);
-  save();clearPreview();toast(`${_importPreview.length} transacciones importadas ✓`);
+  showLoadingOverlay(true);
+  let ok=0, fail=0;
+  for(const tx of _importPreview){
+    try{
+      await saveTxToDB(tx);
+      ST.txs.unshift(tx);
+      ok++;
+    }catch(e){ fail++; }
+  }
+  showLoadingOverlay(false);
+  await addAuditLog("import",`Importadas ${ok} transacciones desde CSV${fail>0?` (${fail} fallidas)`:""}`);
+  toast(`${ok} transacciones importadas ✓${fail>0?` · ${fail} errores`:""}`);
   _importPreview=[];
+  clearPreview();
   go("transactions");
 }
 function downloadTemplate(){
@@ -2126,55 +2375,78 @@ function settings(){
   </div>`;
 }
 
-function selectCurrency(code){
+async function selectCurrency(code){
   if(!ST.settings) ST.settings={};
   ST.settings.currency=code;
-  save();toast(`Moneda cambiada a ${code} ✓`);settings();
+  await saveSettingsToDB();
+  toast(`Moneda cambiada a ${code} ✓`);settings();
 }
-function toggleCents(){
+async function toggleCents(){
   if(!ST.settings) ST.settings={};
   ST.settings.showCents=!ST.settings.showCents;
-  save();settings();
+  await saveSettingsToDB();
+  settings();
 }
-function saveSettingField(field,val){
+async function saveSettingField(field,val){
   if(!ST.settings) ST.settings={};
   ST.settings[field]=val;
-  save();toast("Configuración guardada ✓");
+  await saveSettingsToDB();
+  toast("Configuración guardada ✓");
 }
-function exportAllData(){
+async function exportAllData(){
   const data={user:{name:ST.user.name,email:ST.user.email},txs:ST.txs,budgets:ST.budgets,goals:ST.goals,debts:ST.debts,recurring:ST.recurring,settings:ST.settings,exportedAt:new Date().toISOString()};
   const b=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`appuvi_backup_${tod()}.json`;a.click();
-  toast("Datos exportados ✓");addAuditLog("export","Exportación completa de datos JSON");
+  toast("Datos exportados ✓");
+  await saveAuditToDB("export","Exportación completa JSON");
 }
-function clearMyData(){
+async function clearMyData(){
   if(!confirm("¿Borrar TODOS tus datos? Esta acción no se puede deshacer."))return;
+  const uid=ST.user.uid;
+  await Promise.all([
+    supa.from("transactions").delete().eq("user_id",uid),
+    supa.from("budgets").delete().eq("user_id",uid),
+    supa.from("goals").delete().eq("user_id",uid),
+    supa.from("debts").delete().eq("user_id",uid),
+    supa.from("recurring").delete().eq("user_id",uid),
+    supa.from("notifications").delete().eq("user_id",uid),
+  ]);
   ST.txs=[];ST.budgets=seedB();ST.goals=[];ST.debts=[];ST.recurring=[];ST.notifs=[];
-  save();toast("Datos borrados","err");addAuditLog("clear","Todos los datos del usuario fueron borrados");render();
+  await saveBudgetsToDB();
+  toast("Datos borrados","err");
+  await saveAuditToDB("clear","Todos los datos del usuario fueron borrados");
+  render();
 }
 
 // ════════════════════════════════════════
 // AUDITORÍA E HISTORIAL
 // ════════════════════════════════════════
-function addAuditLog(action,detail){
+async function addAuditLog(action,detail){
+  if(!ST.user) return;
   if(!ST.auditLog) ST.auditLog=[];
-  ST.auditLog.unshift({id:uid(),action,detail,user:ST.user?.name||"?",email:ST.user?.email||"?",ts:new Date().toISOString()});
+  const entry={id:uid(),action,detail,user:ST.user?.name||"?",email:ST.user?.email||"?",ts:new Date().toISOString()};
+  ST.auditLog.unshift(entry);
   if(ST.auditLog.length>200) ST.auditLog=ST.auditLog.slice(0,200);
-  // Save audit separately
-  try{
-    const key=`appuvi_audit_${ST.user?.uid||"global"}`;
-    localStorage.setItem(key,JSON.stringify(ST.auditLog));
-  }catch{}
+  await saveAuditToDB(action,detail);
 }
-function loadAuditLog(){
+async function loadAuditLog(){
+  if(!ST.user) return;
   try{
-    const key=`appuvi_audit_${ST.user?.uid||"global"}`;
-    ST.auditLog=JSON.parse(localStorage.getItem(key)||"[]");
-  }catch{ST.auditLog=[];}
+    const {data} = await supa.from("audit_log")
+      .select("*")
+      .eq("user_id",ST.user.uid)
+      .order("created_at",{ascending:false})
+      .limit(200);
+    ST.auditLog=(data||[]).map(l=>({
+      id:l.id, action:l.action, detail:l.detail,
+      user:ST.user.name, email:ST.user.email,
+      ts:l.created_at
+    }));
+  }catch(e){ST.auditLog=[];}
 }
 
-function audit(){
-  loadAuditLog();
+async function audit(){
+  await loadAuditLog();
   const logs=ST.auditLog||[];
   const actionColors={import:"var(--inc)",export:"var(--sav)",clear:"var(--exp)",delete:"var(--exp)",create:"var(--inc)",edit:"#f59e0b",login:"var(--acc)",pay:"var(--inc)"};
   const actionIcons={import:"⬆",export:"⬇",clear:"🗑",delete:"✕",create:"＋",edit:"✏",login:"◎",pay:"💰"};
@@ -2230,30 +2502,29 @@ function audit(){
   </div>`;
 }
 
-function exportAudit(){
-  loadAuditLog();
+async function exportAudit(){
+  await loadAuditLog();
   const logs=ST.auditLog||[];
   const rows=[["Timestamp","Acción","Detalle","Usuario","Email"],...logs.map(l=>[l.ts,l.action,l.detail,l.user,l.email])];
-  const b=new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n")],{type:"text/csv"});
+  const b=new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'''""''')}"`).join(",")).join("\n")],{type:"text/csv"});
   const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`appuvi_audit_${tod()}.csv`;a.click();
   toast("Log exportado ✓");
 }
-function viewAllUsersAudit(){
+async function viewAllUsersAudit(){
   if(ST.user?.role!=="admin")return;
-  const users=getUsers();
-  let allLogs=[];
-  users.forEach(u=>{
-    try{
-      const key=`appuvi_audit_${u.uid}`;
-      const logs=JSON.parse(localStorage.getItem(key)||"[]");
-      allLogs=[...allLogs,...logs];
-    }catch{}
-  });
-  allLogs.sort((a,b)=>b.ts.localeCompare(a.ts));
-  const rows=[["Timestamp","Acción","Detalle","Usuario","Email"],...allLogs.map(l=>[l.ts,l.action,l.detail,l.user,l.email])];
-  const b=new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n")],{type:"text/csv"});
-  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`appuvi_audit_todos_${tod()}.csv`;a.click();
-  toast(`Log de ${users.length} usuarios exportado ✓`);
+  try{
+    const {data}=await supa.from("audit_log")
+      .select("*, profiles(name,email)")
+      .order("created_at",{ascending:false})
+      .limit(500);
+    const rows=[["Timestamp","Acción","Detalle","Usuario","Email"],...(data||[]).map(l=>[
+      l.created_at,l.action,l.detail,
+      l.profiles?.name||"?",l.profiles?.email||"?"
+    ])];
+    const b=new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'''""''')}"`).join(",")).join("\n")],{type:"text/csv"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`appuvi_audit_todos_${tod()}.csv`;a.click();
+    toast(`Log global exportado ✓`);
+  }catch(e){toast("Error al exportar","err");console.error(e);}
 }
 
 // Patch audit into existing actions
@@ -2264,11 +2535,11 @@ const _saveTxOrig=window.saveTx;
 // ════════════════════════════════════════
 // PATCHES: audit hooks + settings load
 // ════════════════════════════════════════
-function initApp(){
-  _initAppBase();
-  loadAuditLog();
+async function initApp(){
+  await _initAppBase();
+  await loadAuditLog();
   if(!ST.settings) ST.settings={currency:"COP",startOfMonth:1,showCents:false};
-  addAuditLog("login",`Sesión iniciada — ${ST.user?.name}`);
+  await addAuditLog("login",`Sesión iniciada — ${ST.user?.name}`);
 }
 
 function saveTx(){
@@ -2585,16 +2856,17 @@ function budgets(){
   </div>`;
 }
 
-function saveBudgets(){
+async function saveBudgets(){
   CATS.expense.forEach(cat=>{
     const el=document.getElementById("b-"+cat.replace(/\s/g,"_"));
     if(el) ST.budgets[cat]=+el.value||0;
   });
-  save();toast("Presupuestos guardados ✓");
+  await saveBudgetsToDB();
+  toast("Presupuestos guardados ✓");
   addAuditLog("edit","Presupuestos actualizados");
 }
 
-function applySuggestions(){
+async function applySuggestions(){
   const m12=getM12();
   CATS.expense.forEach(cat=>{
     const vals=m12.slice(-3).map(m=>{
@@ -2604,7 +2876,8 @@ function applySuggestions(){
     const avg=vals.reduce((a,v)=>a+v,0)/3;
     if(avg>0) ST.budgets[cat]=Math.ceil(avg*1.1/10000)*10000;
   });
-  save();toast("Sugerencias aplicadas ✓");addAuditLog("edit","Presupuestos inteligentes aplicados");budgets();
+  await saveBudgetsToDB();
+  toast("Sugerencias aplicadas ✓");addAuditLog("edit","Presupuestos inteligentes aplicados");budgets();
 }
 
 // ════════════════════════════════════════
@@ -2750,27 +3023,22 @@ function weekly(){
   </div>`;
 }
 
-function sendWeeklyEmail(){
-  // Simulación de envío
+async function sendWeeklyEmail(){
   const now=new Date();
-  const dayOfWeek=now.getDay();
-  const startOfWeek=new Date(now);
-  startOfWeek.setDate(now.getDate()-dayOfWeek);
-  const endOfWeek=new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate()+6);
+  const startOfWeek=new Date(now);startOfWeek.setDate(now.getDate()-now.getDay());startOfWeek.setHours(0,0,0,0);
+  const endOfWeek=new Date(startOfWeek);endOfWeek.setDate(startOfWeek.getDate()+6);endOfWeek.setHours(23,59,59,999);
   const thisW=ST.txs.filter(t=>{const d=new Date(t.date);return d>=startOfWeek&&d<=endOfWeek;});
   const SW=getS(thisW);
-
-  // Agregar notificación simulada
-  ST.notifs.push({
+  const n={
     id:uid(),
     title:"Resumen semanal enviado",
     body:`Ing: ${fmt(SW.inc)} | Eg: ${fmt(SW.exp)} | Saldo: ${fmt(SW.bal)}. Enviado a ${ST.user.email}`,
     icon:"📧",color:"#3b82f6",read:false,
     date:now.toLocaleDateString("es-CO"),
     createdAt:now.toISOString()
-  });
-  save();
+  };
+  ST.notifs.push(n);
+  await saveNotifToDB(n);
   addAuditLog("export",`Resumen semanal enviado a ${ST.user.email}`);
   toast(`Resumen enviado a ${ST.user.email} ✓`);
 }
@@ -2818,8 +3086,28 @@ function dashboard(){
 // ════════════════════════════════════════
 // BOOT
 // ════════════════════════════════════════
-initDemoUsers();
-renderLoginBox();
+// ════════════════════════════════════════
+// BOOT — check existing session
+// ════════════════════════════════════════
+async function bootApp(){
+  renderLoginBox();
+  // Check if user already has a session
+  const {data:{session}} = await supa.auth.getSession();
+  if(session?.user){
+    await afterLogin(session.user);
+  }
+  // Listen for auth changes
+  supa.auth.onAuthStateChange(async (event,session)=>{
+    if(event==="SIGNED_OUT"){
+      ST.user=null;
+      document.getElementById("app").style.display="none";
+      document.getElementById("lp").style.display="flex";
+      loginMode="login";
+      renderLoginBox();
+    }
+  });
+}
+bootApp();
 </script>
 </body>
 </html>
