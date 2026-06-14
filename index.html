@@ -83,7 +83,12 @@ tr:hover td{background:rgba(124,106,247,.03)}
 #lp{position:fixed;inset:0;background:#fff;display:flex;z-index:999;overflow:hidden}
 .lm #lp{background:#fff}
 /* Panel izquierdo - formulario */
-#lp-left{flex:0 0 480px;display:flex;flex-direction:column;justify-content:center;padding:56px 64px;background:#fff;overflow-y:auto}
+#lp-left{flex:0 0 480px;display:flex;flex-direction:column;justify-content:center;padding:56px 64px;background:#ffffff;overflow-y:auto;min-height:100vh}
+/* Force light colors in login panel regardless of theme */
+#lp-left *{color-scheme:light}
+#lp-left .linp{background:#fff;border:1.5px solid #e0ddd8;color:#1a1010 !important}
+#lp-left label{color:#464646 !important}
+#lp-left h1,#lp-left div{color:#1a1010}
 /* Panel derecho - imagen/branding */
 #lp-right{flex:1;background:linear-gradient(160deg,#1a0f0a 0%,#2d1810 40%,#A35E47 100%);display:flex;flex-direction:column;justify-content:flex-end;padding:56px;position:relative;overflow:hidden}
 #lp-right::before{content:'';position:absolute;inset:0;background:url('https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=900&q=80') center/cover no-repeat;opacity:.25}
@@ -128,7 +133,31 @@ tr:hover td{background:rgba(124,106,247,.03)}
       <span style="font-size:15px;font-weight:800;color:#1a1010;letter-spacing:-.4px">Appuvi</span>
     </div>
     <!-- Form container -->
-    <div id="login-box"></div>
+    <div id="login-box">
+      <!-- Pre-rendered to avoid blank flash -->
+      <div style="margin-bottom:32px">
+        <div style="font-size:26px;font-weight:900;color:#1a1010;margin-bottom:6px">Bienvenido</div>
+        <div style="font-size:13px;color:#9C9A9A">Ingresa tus datos para continuar</div>
+      </div>
+      <div style="margin-bottom:14px">
+        <label style="font-size:12px;font-weight:600;color:#464646;display:block;margin-bottom:6px">Correo electrónico</label>
+        <input id="le" type="email" class="linp" placeholder="tu@email.com">
+      </div>
+      <div style="margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <label style="font-size:12px;font-weight:600;color:#464646">Contraseña</label>
+          <button onclick="forgotPassword()" style="background:none;border:none;color:#A35E47;font-size:12px;cursor:pointer;font-family:inherit">¿Olvidaste tu contraseña?</button>
+        </div>
+        <input id="lp2" type="password" class="linp" placeholder="••••••••">
+        <label for="lremember" style="font-size:12px;color:#464646;cursor:pointer">Recordarme por 30 días</label>
+      </div>
+      <div id="lerr" style="color:#f43f5e;font-size:12px;margin-bottom:12px;display:none;background:rgba(244,63,94,.08);padding:8px 12px;border-radius:7px;border:1px solid rgba(244,63,94,.2)"></div>
+      <button class="lbtn" id="login-btn-static">Iniciar sesión</button>
+      <div style="margin-top:28px;border-top:1px solid #f0ece8;padding-top:16px;font-size:10px;color:#9C9A9A;text-align:center">
+        <strong style="color:#c47a5a">Cuentas demo:</strong><br>
+        admin@appuvi.co / admin123 &nbsp;·&nbsp; carlos@appuvi.co / user123
+      </div>
+    </div>
   </div>
   <!-- Right: Branding panel -->
   <div id="lp-right">
@@ -207,52 +236,76 @@ const supa = supabase.createClient(SUPA_URL, SUPA_KEY);
 // SUPABASE: AUTH
 // ════════════════════════════════════════
 async function doLogin(){
-  const em = document.getElementById("le").value.trim().toLowerCase();
-  const pw = document.getElementById("lp2").value;
+  const em = document.getElementById("le")?.value.trim().toLowerCase();
+  const pw = document.getElementById("lp2")?.value;
   const err = document.getElementById("lerr");
-  if(!em||!pw){err.textContent="Completa todos los campos";err.style.display="";return;}
-  err.style.display="none";
-
+  if(!em||!pw){if(err){err.textContent="Completa todos los campos";err.style.display="";}return;}
+  if(err) err.style.display="none";
   showLoginLoading(true);
-  const {data,error} = await supa.auth.signInWithPassword({email:em,password:pw});
-  showLoginLoading(false);
-
-  if(error){
-    err.textContent = error.message==="Invalid login credentials"
-      ? "Email o contraseña incorrectos"
-      : error.message;
-    err.style.display="";
-    return;
+  try{
+    const {data,error} = await supa.auth.signInWithPassword({email:em,password:pw});
+    showLoginLoading(false);
+    if(error){
+      const msg = error.message==="Invalid login credentials"
+        ? "Email o contraseña incorrectos"
+        : (error.message==="Failed to fetch"||error.message?.includes("fetch"))
+          ? "Sin conexión. Verifica tu internet e intenta de nuevo."
+          : error.message;
+      if(err){err.textContent=msg;err.style.display="";}
+      return;
+    }
+    await afterLogin(data.user);
+  }catch(e){
+    showLoginLoading(false);
+    const msg = e.message?.includes("fetch")
+      ? "Sin conexión. Verifica tu internet e intenta de nuevo."
+      : "Error inesperado: "+e.message;
+    if(err){err.textContent=msg;err.style.display="";}
+    console.error("doLogin error:",e);
   }
-  await afterLogin(data.user);
 }
 
 async function doRegister(){
-  const name = document.getElementById("rn").value.trim();
-  const em   = document.getElementById("re").value.trim().toLowerCase();
-  const pw   = document.getElementById("rp").value;
-  const pw2  = document.getElementById("rp2").value;
+  const name = document.getElementById("rn")?.value.trim();
+  const em   = document.getElementById("re")?.value.trim().toLowerCase();
+  const pw   = document.getElementById("rp")?.value;
+  const pw2  = document.getElementById("rp2")?.value;
   const err  = document.getElementById("rerr");
-  if(!name||!em||!pw||!pw2){err.textContent="Completa todos los campos";err.style.display="";return;}
-  if(pw.length<6){err.textContent="La contraseña debe tener al menos 6 caracteres";err.style.display="";return;}
-  if(pw!==pw2){err.textContent="Las contraseñas no coinciden";err.style.display="";return;}
-  err.style.display="none";
-
+  if(!name||!em||!pw||!pw2){if(err){err.textContent="Completa todos los campos";err.style.display="";}return;}
+  if(pw.length<6){if(err){err.textContent="La contraseña debe tener al menos 6 caracteres";err.style.display="";}return;}
+  if(pw!==pw2){if(err){err.textContent="Las contraseñas no coinciden";err.style.display="";}return;}
+  if(err) err.style.display="none";
   showRegisterLoading(true);
-  const {data,error} = await supa.auth.signUp({
-    email:em, password:pw,
-    options:{data:{name, role:"user"}}
-  });
-  showRegisterLoading(false);
-
-  if(error){err.textContent=error.message;err.style.display="";return;}
-  toast(`¡Bienvenido/a, ${name}! 🎉`);
-  await afterLogin(data.user);
+  try{
+    const {data,error} = await supa.auth.signUp({
+      email:em, password:pw,
+      options:{data:{name, role:"user"}}
+    });
+    showRegisterLoading(false);
+    if(error){
+      const msg = (error.message==="Failed to fetch"||error.message?.includes("fetch"))
+        ? "Sin conexión. Verifica tu internet e intenta de nuevo."
+        : error.message;
+      if(err){err.textContent=msg;err.style.display="";}
+      return;
+    }
+    toast(`¡Bienvenido/a, ${name}! 🎉`);
+    await afterLogin(data.user);
+  }catch(e){
+    showRegisterLoading(false);
+    const msg = e.message?.includes("fetch")
+      ? "Sin conexión. Verifica tu internet e intenta de nuevo."
+      : "Error inesperado: "+e.message;
+    if(err){err.textContent=msg;err.style.display="";}
+    console.error("doRegister error:",e);
+  }
 }
 
 async function doLogout(){
-  await save();
-  await supa.auth.signOut();
+  try{
+    await save();
+    await supa.auth.signOut();
+  }catch(e){ console.error("doLogout error:",e); }
   ST.user=null;ST.txs=[];ST.budgets={};ST.goals=[];
   ST.debts=[];ST.recurring=[];ST.notifs=[];
   document.getElementById("app").style.display="none";
@@ -263,21 +316,33 @@ async function doLogout(){
 
 async function afterLogin(authUser){
   if(!authUser) return;
-  // Get profile
-  const {data:profile} = await supa.from("profiles").select("*").eq("id",authUser.id).single();
-  if(!profile){
-    // Profile should be created by trigger, retry once
-    await new Promise(r=>setTimeout(r,1000));
-    const {data:p2} = await supa.from("profiles").select("*").eq("id",authUser.id).single();
-    if(!p2){toast("Error cargando perfil","err");return;}
-    ST.user = {...p2, uid:p2.id, avatarColor:"av-0"};
-  } else {
-    ST.user = {...profile, uid:profile.id, avatarColor:profile.avatar_color||"av-0"};
+  try{
+    // Get profile
+    const {data:profile, error:profileErr} = await supa.from("profiles").select("*").eq("id",authUser.id).single();
+    if(profileErr && profileErr.code!=="PGRST116"){
+      toast("Error cargando perfil: "+(profileErr.message?.includes("fetch")?"Sin conexión":profileErr.message),"err");
+      return;
+    }
+    if(!profile){
+      // Profile should be created by trigger, retry once
+      await new Promise(r=>setTimeout(r,1200));
+      const {data:p2, error:p2err} = await supa.from("profiles").select("*").eq("id",authUser.id).single();
+      if(!p2){toast("Error cargando perfil","err");return;}
+      ST.user = {...p2, uid:p2.id, avatarColor:p2.avatar_color||"av-0"};
+    } else {
+      ST.user = {...profile, uid:profile.id, avatarColor:profile.avatar_color||"av-0"};
+    }
+    document.getElementById("lp").style.display="none";
+    document.getElementById("app").style.display="flex";
+    await loadUserState();
+    await initApp();
+  }catch(e){
+    const msg = e.message?.includes("fetch")
+      ? "Sin conexión al servidor. Verifica tu internet."
+      : "Error al iniciar sesión: "+e.message;
+    toast(msg,"err");
+    console.error("afterLogin error:",e);
   }
-  document.getElementById("lp").style.display="none";
-  document.getElementById("app").style.display="flex";
-  await loadUserState();
-  initApp();
 }
 
 function showLoginLoading(on){
@@ -303,76 +368,119 @@ async function save(){
 // Save individual entities to Supabase
 async function saveTxToDB(tx){
   if(!ST.user) return;
-  await supa.from("transactions").upsert({
-    id:tx.id, user_id:ST.user.uid,
-    type:tx.type, amount:tx.amount,
-    category:tx.category, description:tx.description,
-    date:tx.date, month:tx.month, year:tx.year
-  });
+  try{
+    const {error} = await supa.from("transactions").upsert({
+      id:tx.id, user_id:ST.user.uid,
+      type:tx.type, amount:tx.amount,
+      category:tx.category, description:tx.description,
+      date:tx.date, month:tx.month, year:tx.year
+    });
+    if(error) throw error;
+  }catch(e){
+    toast(e.message?.includes("fetch")?"Sin conexión al guardar transacción":"Error al guardar: "+e.message,"err");
+    console.error("saveTxToDB:",e);
+  }
 }
 async function deleteTxFromDB(id){
-  await supa.from("transactions").delete().eq("id",id).eq("user_id",ST.user.uid);
+  try{
+    const {error} = await supa.from("transactions").delete().eq("id",id).eq("user_id",ST.user.uid);
+    if(error) throw error;
+  }catch(e){
+    toast(e.message?.includes("fetch")?"Sin conexión al eliminar":"Error al eliminar: "+e.message,"err");
+    console.error("deleteTxFromDB:",e);
+  }
 }
 async function saveBudgetsToDB(){
   if(!ST.user) return;
-  const rows = Object.entries(ST.budgets).map(([category,amount])=>({
-    user_id:ST.user.uid, category, amount
-  }));
-  await supa.from("budgets").upsert(rows,{onConflict:"user_id,category"});
+  try{
+    const rows = Object.entries(ST.budgets).map(([category,amount])=>({user_id:ST.user.uid,category,amount}));
+    const {error}=await supa.from("budgets").upsert(rows,{onConflict:"user_id,category"});
+    if(error) throw error;
+  }catch(e){ console.error("saveBudgetsToDB:",e); }
 }
 async function saveGoalToDB(g){
-  await supa.from("goals").upsert({
-    id:g.id, user_id:ST.user.uid,
-    name:g.name, target:g.target, saved:g.saved,
-    icon:g.icon, color:g.color,
-    deadline:g.deadline||null, note:g.note||null
-  });
+  try{
+    const {error}=await supa.from("goals").upsert({
+      id:g.id, user_id:ST.user.uid,
+      name:g.name, target:g.target, saved:g.saved,
+      icon:g.icon, color:g.color,
+      deadline:g.deadline||null, note:g.note||null
+    });
+    if(error) throw error;
+  }catch(e){ console.error("saveGoalToDB:",e); }
 }
 async function deleteGoalFromDB(id){
-  await supa.from("goals").delete().eq("id",id).eq("user_id",ST.user.uid);
+  try{
+    const {error}=await supa.from("goals").delete().eq("id",id).eq("user_id",ST.user.uid);
+    if(error) throw error;
+  }catch(e){ console.error("deleteGoalFromDB:",e); }
 }
 async function saveDebtToDB(d){
-  await supa.from("debts").upsert({
-    id:d.id, user_id:ST.user.uid,
-    name:d.name, total:d.total, paid:d.paid,
-    rate:d.rate||0, quota:d.quota||0,
-    next_date:d.nextDate||null, icon:d.icon, color:d.color, notes:d.notes||null
-  });
+  try{
+    const {error}=await supa.from("debts").upsert({
+      id:d.id, user_id:ST.user.uid,
+      name:d.name, total:d.total, paid:d.paid,
+      rate:d.rate||0, quota:d.quota||0,
+      next_date:d.nextDate||null, icon:d.icon, color:d.color, notes:d.notes||null
+    });
+    if(error) throw error;
+  }catch(e){ console.error("saveDebtToDB:",e); }
 }
 async function deleteDebtFromDB(id){
-  await supa.from("debts").delete().eq("id",id).eq("user_id",ST.user.uid);
+  try{
+    const {error}=await supa.from("debts").delete().eq("id",id).eq("user_id",ST.user.uid);
+    if(error) throw error;
+  }catch(e){ console.error("deleteDebtFromDB:",e); }
 }
 async function saveRecurringToDB(r){
-  await supa.from("recurring").upsert({
-    id:r.id, user_id:ST.user.uid,
-    type:r.type, amount:r.amount,
-    category:r.category, description:r.description,
-    day:r.day, active:r.active, color:r.color
-  });
+  try{
+    const {error}=await supa.from("recurring").upsert({
+      id:r.id, user_id:ST.user.uid,
+      type:r.type, amount:r.amount,
+      category:r.category, description:r.description,
+      day:r.day, active:r.active, color:r.color
+    });
+    if(error) throw error;
+  }catch(e){ console.error("saveRecurringToDB:",e); }
 }
 async function deleteRecurringFromDB(id){
-  await supa.from("recurring").delete().eq("id",id).eq("user_id",ST.user.uid);
+  try{
+    const {error}=await supa.from("recurring").delete().eq("id",id).eq("user_id",ST.user.uid);
+    if(error) throw error;
+  }catch(e){ console.error("deleteRecurringFromDB:",e); }
 }
 async function saveNotifToDB(n){
-  await supa.from("notifications").upsert({
-    id:n.id, user_id:ST.user.uid,
-    title:n.title, body:n.body||null,
-    icon:n.icon||"🔔", color:n.color||"#A35E47",
-    date:n.date||null, read:n.read||false
-  });
+  try{
+    const {error}=await supa.from("notifications").upsert({
+      id:n.id, user_id:ST.user.uid,
+      title:n.title, body:n.body||null,
+      icon:n.icon||"🔔", color:n.color||"#A35E47",
+      date:n.date||null, read:n.read||false
+    });
+    if(error) throw error;
+  }catch(e){ console.error("saveNotifToDB:",e); }
 }
 async function saveAuditToDB(action,detail){
   if(!ST.user) return;
-  await supa.from("audit_log").insert({
-    user_id:ST.user.uid, action, detail
-  });
+  try{
+    await supa.from("audit_log").insert({user_id:ST.user.uid, action, detail});
+  }catch(e){ console.error("saveAuditToDB:",e); }
 }
 async function saveSettingsToDB(){
   if(!ST.user) return;
-  await supa.from("profiles").update({settings:ST.settings}).eq("id",ST.user.uid);
+  try{
+    const {error}=await supa.from("profiles").update({settings:ST.settings}).eq("id",ST.user.uid);
+    if(error) throw error;
+  }catch(e){ console.error("saveSettingsToDB:",e); }
 }
 async function saveProfileToDB(updates){
-  await supa.from("profiles").update(updates).eq("id",ST.user.uid);
+  try{
+    const {error}=await supa.from("profiles").update(updates).eq("id",ST.user.uid);
+    if(error) throw error;
+  }catch(e){
+    toast(e.message?.includes("fetch")?"Sin conexión al guardar perfil":"Error al guardar perfil","err");
+    console.error("saveProfileToDB:",e);
+  }
 }
 
 // ════════════════════════════════════════
@@ -454,7 +562,13 @@ async function loadUserState(){
     if(ST.user.role!=="admin"){
       if(!txRes.data?.length) await seedDataToDB();
     }
-  }catch(e){console.error("loadUserState error:",e);}
+  }catch(e){
+    console.error("loadUserState error:",e);
+    const msg = e.message?.includes("fetch")
+      ? "Sin conexión al cargar datos. Verifica tu internet y recarga la página."
+      : "Error cargando datos: "+e.message;
+    toast(msg,"err");
+  }
   showLoadingOverlay(false);
 }
 
@@ -572,6 +686,27 @@ function toast(msg,type="ok"){
 // ════════════════════════════════════════
 let loginMode="login"; // "login" | "register"
 
+async function forgotPassword(){
+  try{
+    const em = document.getElementById("le")?.value?.trim();
+    const emailTarget = em || prompt("Ingresa tu correo electrónico:");
+    if(!emailTarget) return;
+    const {error} = await supa.auth.resetPasswordForEmail(emailTarget.trim(), {
+      redirectTo: window.location.origin
+    });
+    if(error){
+      const msg = error.message?.includes("fetch")?"Sin conexión. Verifica tu internet.":"Error: "+error.message;
+      toast(msg,"err");
+    } else {
+      toast(`✉ Correo enviado a ${emailTarget.trim()}`);
+    }
+  }catch(e){
+    const msg = e.message?.includes("fetch")?"Sin conexión. Verifica tu internet.":"Error: "+e.message;
+    toast(msg,"err");
+    console.error("forgotPassword error:",e);
+  }
+}
+
 function renderLoginBox(){
   const box=document.getElementById("login-box");
   if(loginMode==="login"){
@@ -589,7 +724,7 @@ function renderLoginBox(){
     <div style="margin-bottom:6px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <label style="font-size:12px;font-weight:600;color:#464646">Contraseña</label>
-        <button onclick="" style="background:none;border:none;color:#A35E47;font-size:12px;cursor:pointer;font-family:inherit">¿Olvidaste tu contraseña?</button>
+        <button onclick="forgotPassword()" style="background:none;border:none;color:#A35E47;font-size:12px;cursor:pointer;font-family:inherit">¿Olvidaste tu contraseña?</button>
       </div>
       <input id="lp2" type="password" class="linp" placeholder="••••••••">
     </div>
@@ -2089,7 +2224,7 @@ async function registerDebtPayment(id){
   closeModal();toast("Pago registrado ✓");debts();
 }
 
-function saveRecurring(){
+async function saveRecurring(){
   addAuditLog("create","Nueva transacción recurrente creada");
   const type=document.getElementById("rt").value;
   const amount=+document.getElementById("ra").value;
@@ -2103,7 +2238,6 @@ function saveRecurring(){
   await saveRecurringToDB(rec);
   closeModal();toast("Recurrente creada ✓");recurring();
 }
-async function saveRecurring(){ await _saveRecurringBase(); }
 
 async function saveNotif(){
   const title=document.getElementById("ntit").value.trim();
@@ -2506,7 +2640,7 @@ async function exportAudit(){
   await loadAuditLog();
   const logs=ST.auditLog||[];
   const rows=[["Timestamp","Acción","Detalle","Usuario","Email"],...logs.map(l=>[l.ts,l.action,l.detail,l.user,l.email])];
-  const b=new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'''""''')}"`).join(",")).join("\n")],{type:"text/csv"});
+  const b=new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n")],{type:"text/csv"});
   const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`appuvi_audit_${tod()}.csv`;a.click();
   toast("Log exportado ✓");
 }
@@ -2521,7 +2655,7 @@ async function viewAllUsersAudit(){
       l.created_at,l.action,l.detail,
       l.profiles?.name||"?",l.profiles?.email||"?"
     ])];
-    const b=new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'''""''')}"`).join(",")).join("\n")],{type:"text/csv"});
+    const b=new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n")],{type:"text/csv"});
     const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`appuvi_audit_todos_${tod()}.csv`;a.click();
     toast(`Log global exportado ✓`);
   }catch(e){toast("Error al exportar","err");console.error(e);}
@@ -2542,19 +2676,19 @@ async function initApp(){
   await addAuditLog("login",`Sesión iniciada — ${ST.user?.name}`);
 }
 
-function saveTx(){
-  _saveTxBase();
+async function saveTx(){
+  await _saveTxBase();
   addAuditLog("create","Nueva transacción agregada");
 }
 
-function deleteTx(id){
+async function deleteTx(id){
   const t=ST.txs.find(x=>x.id===id);
-  _deleteTxBase(id);
+  await _deleteTxBase(id);
   if(t) addAuditLog("delete",`Transacción eliminada: ${t.description} (${fmt(t.amount)})`);
 }
 
-function saveGoal(){
-  _saveGoalBase();
+async function saveGoal(){
+  await _saveGoalBase();
   addAuditLog("create","Nueva meta de ahorro creada");
 }
 
@@ -3090,20 +3224,30 @@ function dashboard(){
 // BOOT — check existing session
 // ════════════════════════════════════════
 async function bootApp(){
+  // Render login (replaces static pre-rendered HTML with properly event-wired version)
   renderLoginBox();
-  // Check if user already has a session
-  const {data:{session}} = await supa.auth.getSession();
-  if(session?.user){
-    await afterLogin(session.user);
+
+  // Then check if there's an existing session in background
+  try{
+    const {data:{session}} = await supa.auth.getSession();
+    if(session?.user){
+      await afterLogin(session.user);
+    }
+  }catch(e){
+    console.error("Session check failed:", e);
   }
-  // Listen for auth changes
-  supa.auth.onAuthStateChange(async (event,session)=>{
+
+  // Listen for auth state changes
+  supa.auth.onAuthStateChange(async (event, session)=>{
     if(event==="SIGNED_OUT"){
       ST.user=null;
       document.getElementById("app").style.display="none";
       document.getElementById("lp").style.display="flex";
       loginMode="login";
       renderLoginBox();
+    }
+    if(event==="SIGNED_IN" && session?.user && !ST.user){
+      await afterLogin(session.user);
     }
   });
 }
